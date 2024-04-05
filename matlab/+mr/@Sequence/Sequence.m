@@ -62,6 +62,10 @@ classdef Sequence < handle
         
         sys;
     end
+
+    properties(GetAccess = public, SetAccess = public)
+        name;
+     end
     
     methods
         
@@ -81,6 +85,7 @@ classdef Sequence < handle
             obj.extensionStringIDs={};
             obj.extensionNumericIDs=[];
             obj.blockEvents = {};
+            obj.name="";
             
             if nargin<1
                 sys=mr.opts();
@@ -99,6 +104,7 @@ classdef Sequence < handle
             obj.signatureType=''; 
             obj.signatureFile=''; 
             obj.signatureValue='';
+            obj.setDefinition('Name', obj.name);
         end
         
         
@@ -1255,6 +1261,10 @@ classdef Sequence < handle
                 end
             end            
             %for iB=1:size(obj.blockEvents,1)
+            sequence = cell(1, length(obj.blockEvents));
+            for i = 1:length(obj.blockEvents)
+                sequence{i} = struct('rf', struct('t', [], 'A', []), 'df', struct('t', [], 'A', []), 'gx', struct('t', [], 'A', []), 'gy', struct('t', [], 'A', []), 'gz', struct('t', [], 'A', []), 'adc', struct('t', [], 'A', []));
+            end
             for iB=1:length(obj.blockEvents)
                 block = obj.getBlock(iB);
                 isValid = t0+obj.blockDurations(iB)>timeRange(1) && t0<=timeRange(2);
@@ -1275,6 +1285,8 @@ classdef Sequence < handle
                         t=adc.delay + ((0:adc.numSamples-1)+0.5)*adc.dwell; % according to the imformation from Klaus Scheffler and indirectly from Siemens this is the present convention (the samples are shifted by 0.5 dwell)
                         plot(tFactor*(t0+t),zeros(size(t)),'rx','Parent',ax(1));
                         plot(tFactor*(t0+t), angle(exp(1i*adc.phaseOffset).*exp(1i*2*pi*t*adc.freqOffset)),'b.','MarkerSize',1,'Parent',ax(3)); % plot ADC phase
+                        sequence{iB}.adc.t = tFactor*(t0+t);
+                        sequence{iB}.adc.A = ones(size(t));
                         if label_defined && ~isempty(label_indexes_2plot)
                             set(ax(1),'ColorOrder',label_colors_2plot);
                             label_store_cell=struct2cell(label_store);
@@ -1291,17 +1303,19 @@ classdef Sequence < handle
                         rf=block.rf;
                         [tc,ic]=mr.calcRfCenter(rf);
                         sc=rf.signal(ic);
-                        if max(abs(diff(rf.t)-rf.t(2)+rf.t(1)))<1e-9 && length(rf.t)>100
-                            % homogeneous sampling and long pulses -- use lower time resolution for better display and performance
-                            dt=rf.t(2)-rf.t(1);
-                            st=round(obj.sys.gradRasterTime/dt);
-                            t=rf.t(1:st:end);
-                            s=rf.signal(1:st:end);
-                        else
+                        %if max(abs(diff(rf.t)-rf.t(2)+rf.t(1)))<1e-9 && length(rf.t)>100
+                        %    % homogeneous sampling and long pulses -- use lower time resolution for better display and performance
+                        %    dt=rf.t(2)-rf.t(1);
+                        %    st=round(obj.sys.gradRasterTime/dt);
+                        %    t=rf.t(1:st:end);
+                        %    s=rf.signal(1:st:end);
+                        %else
                             t=rf.t;
                             s=rf.signal;
-                        end
+                        %end
                         sreal=max(abs(imag(s)))/max(abs(real(s)))<1e-6; %all(isreal(s));
+                        s_saved = [0; s; 0];
+                        t_saved = [t(1); t; t(end)];
                         if abs(s(1))~=0 % fix strangely looking phase / amplitude in the beginning
                             s=[0; s];
                             t=[t(1); t];
@@ -1317,7 +1331,11 @@ classdef Sequence < handle
                         else
                             plot(tFactor*(t0+t+rf.delay),  abs(s),'Parent',ax(2));
                             plot(tFactor*(t0+t+rf.delay),  angle(s*exp(1i*rf.phaseOffset).*exp(1i*2*pi*t    *rf.freqOffset)), tFactor*(t0+tc+rf.delay), angle(sc*exp(1i*rf.phaseOffset).*exp(1i*2*pi*tc*rf.freqOffset)),'xb', 'Parent',ax(3));
-                        end                        
+                        end
+                        sequence{iB}.rf.t = tFactor*(t0 + t_saved + rf.delay);
+                        sequence{iB}.rf.A = s_saved*exp(1i*rf.phaseOffset) / obj.sys.gamma;
+                        sequence{iB}.df.t = tFactor*(t0 + t_saved + rf.delay);
+                        sequence{iB}.df.A = [0; rf.freqOffset; rf.freqOffset; 0];                        
                         %plot(tFactor*(t0+t+rf.delay),  angle(  exp(1i*rf.phaseOffset).*exp(1i*2*pi*t    *rf.freqOffset)), tFactor*(t0+tc+rf.delay), angle(      exp(1i*rf.phaseOffset).*exp(1i*2*pi*t(ic)*rf.freqOffset)),'xb', 'Parent',ax(3));
                     end
                     gradChannels={'gx','gy','gz'};
@@ -1331,17 +1349,35 @@ classdef Sequence < handle
                                 %t=grad.delay + [0; grad.t + (grad.t(2)-grad.t(1))/2; grad.t(end) + grad.t(2)-grad.t(1)];
                                 t= grad.delay+[0; grad.tt; grad.shape_dur];
                                 waveform=1e-3* [grad.first; grad.waveform; grad.last];
+                                t_saved = t;
+                                wave_saved = [0; grad.waveform; 0];
                             else
                                 t=cumsum([0 grad.delay grad.riseTime grad.flatTime grad.fallTime]);
                                 waveform=1e-3*grad.amplitude*[0 0 1 1 0];
+                                t_saved = t(2:end);
+                                wave_saved = grad.amplitude*[0 1 1 0];
                             end
                             plot(tFactor*(t0+t),waveform,'Parent',ax(3+j));
+                            if sum(abs(waveform)) ~= 0
+                                gi_t = tFactor * (t0 + t_saved);
+                                gi_A = wave_saved / obj.sys.gamma;
+                                if j == 1
+                                    sequence{iB}.gx.t = gi_t;
+                                    sequence{iB}.gx.A = gi_A;
+                                elseif j == 2
+                                    sequence{iB}.gy.t = gi_t;
+                                    sequence{iB}.gy.A = gi_A;
+                                else
+                                    sequence{iB}.gz.t = gi_t;
+                                    sequence{iB}.gz.A = gi_A;
+                                end
+                            end
                         end
                     end                
                 end
                 t0=t0+obj.blockDurations(iB);%mr.calcDuration(block);
             end
-            
+            save(strcat(obj.name, '.mat'), 'sequence')
             % Set axis limits and zoom properties
             dispRange = tFactor*[timeRange(1) min(timeRange(2),t0)];
             arrayfun(@(x)xlim(x,dispRange),ax);

@@ -40,6 +40,7 @@ obj.labelsetLibrary = mr.EventLibrary();
 obj.labelincLibrary = mr.EventLibrary();
 obj.extensionStringIDs={};
 obj.extensionNumericIDs=[];
+obj.name="";
 
 version_combined=0;
 
@@ -68,6 +69,10 @@ while true
             v=obj.getDefinition('BlockDurationRaster');
             if ~isempty(v)
                 obj.blockDurationRaster=v;
+            end
+            v=obj.getDefinition('Name');
+            if ~isempty(v)
+                obj.name=v;
             end
         case '[SIGNATURE]'
             tmpSignDefs = readDefinitions(fid);
@@ -223,9 +228,9 @@ for iB = 1:length(obj.blockEvents)
             if grad.delay>0 
                 gradPrevLast(j)=0;
             end
-            if isfield(grad,'first')
-                continue;
-            end
+            %if isfield(grad,'first')
+            %    continue;
+            %end
             grad.first = gradPrevLast(j);
             % is this an extended trapezoid?
             if grad.time_id~=0
